@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme {
+  --color-forest-green: #2D5A27;
+  --color-earth-brown: #4B3621;
+  --color-soft-cream: #F5F5DC;
+  --color-withered: #6B7280;
+}
+
+body {
+  background-color: var(--color-soft-cream);
+  color: var(--color-earth-brown);
+  font-family: 'Inter', sans-serif;
+}
+
+@layer base {
+  input[type="range"] {
+    @apply h-2 bg-forest-green/20 rounded-lg appearance-none cursor-pointer accent-forest-green;
+  }
+}

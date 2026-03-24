@@ -1,0 +1,132 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (Firebase Auth UID)
+    // Fields:
+    //   - uid: string (required)
+    //   - displayName: string (required, < 50 chars)
+    //   - photoURL: string (optional, URL)
+    //   - totalTreesGrown: number (required, >= 0)
+    //   - totalFocusTime: number (required, >= 0)
+    //   - lastActive: timestamp (required)
+    //
+    // Collection: users/{userId}/sessions
+    // Document ID: {sessionId}
+    // Fields:
+    //   - uid: string (required, matches parent userId)
+    //   - status: string (required, ['success', 'withered'])
+    //   - duration: number (required, 10-120)
+    //   - timestamp: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "nirajkakad9@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.displayName is string && data.displayName.size() > 0 && data.displayName.size() < 50 &&
+             (data.photoURL == null || (isValidUrl(data.photoURL) && data.photoURL.size() < 500)) &&
+             data.totalTreesGrown is number && data.totalTreesGrown >= 0 &&
+             data.totalFocusTime is number && data.totalFocusTime >= 0 &&
+             data.coins is number && data.coins >= 0 &&
+             data.unlockedTrees is list && data.unlockedTrees.size() < 20;
+    }
+
+    function isValidRoom(data) {
+      return data.id is string && data.id.size() == 6 &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 30 &&
+             data.createdBy == request.auth.uid;
+    }
+
+    function isValidMember(data, userId) {
+      return data.uid == userId &&
+             data.displayName is string && data.displayName.size() < 50 &&
+             (data.photoURL == null || data.photoURL.size() < 500) &&
+             data.totalTreesGrown is number &&
+             data.coins is number;
+    }
+
+    function isValidSession(data, userId) {
+      return data.uid == userId &&
+             data.status in ['success', 'withered'] &&
+             data.duration is number && data.duration >= 10 && data.duration <= 120 &&
+             data.species is string && data.species.size() < 20;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Users can read any profile for the leaderboard, but we must ensure no PII is leaked.
+      // Assuming 'users' collection only contains public profile info.
+      allow read: if isAuthenticated();
+      
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      (!('role' in request.resource.data) || request.resource.data.role == 'user');
+      
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      (request.resource.data.role == resource.data.role || isAdmin());
+
+      match /sessions/{sessionId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidSession(request.resource.data, userId);
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    match /rooms/{roomId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && 
+                      request.resource.data.id == roomId &&
+                      isValidRoom(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.createdBy == request.auth.uid &&
+                      isValidRoom(request.resource.data);
+
+      match /members/{userId} {
+        allow read: if isAuthenticated();
+        allow create: if isOwner(userId) && isValidMember(request.resource.data, userId);
+        allow update: if isOwner(userId) && isValidMember(request.resource.data, userId);
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
